@@ -23,12 +23,6 @@ Puppet::Type.type(:mysql_grant).provide(:mysql, parent: Puppet::Provider::Mysql)
         raise Puppet::Error, _('#mysql had an error ->  %{inspect}') % { inspect: e.inspect }
       end
 
-      # initialize variables to be visible outside of the grants.each_line scope
-      stripped_privileges = []
-      table = ''
-      options = []
-      host = ''
-
       # we need to iterate over all grants rows, because on mysql 8+ there are static and dynamic privileges
       # each on separate row of show grants
       # Once we have the list of grants generate entries for each.
@@ -43,7 +37,7 @@ Puppet::Type.type(:mysql_grant).provide(:mysql, parent: Puppet::Provider::Mysql)
         # split on ',' if it is not a non-'('-containing string followed by a
         # closing parenthesis ')'-char - e.g. only split comma separated elements not in
         # parentheses
-        local_stripped_privileges = privileges.strip.split(%r{\s*,\s*(?![^(]*\))}).map do |priv|
+        stripped_privileges = privileges.strip.split(%r{\s*,\s*(?![^(]*\))}).map do |priv|
           # split and sort the column_privileges in the parentheses and rejoin
           if priv.include?('(')
             type, col = priv.strip.split(%r{\s+|\b}, 2)
@@ -54,17 +48,17 @@ Puppet::Type.type(:mysql_grant).provide(:mysql, parent: Puppet::Provider::Mysql)
             (priv == 'ALL PRIVILEGES') ? 'ALL' : priv.strip
           end
         end
-        stripped_privileges.concat local_stripped_privileges
         # Same here, but to remove OPTION leaving just GRANT.
-        local_options = if %r{WITH\sGRANT\sOPTION}.match?(rest)
-                          ['GRANT']
-                        else
-                          ['NONE']
-                        end
-        options.concat local_options
+        options = if %r{WITH\sGRANT\sOPTION}.match?(rest)
+                    ['GRANT']
+                  else
+                    ['NONE']
+                  end
         # fix double backslash that MySQL prints, so resources match
         table.gsub!('\\\\', '\\')
+
         # We need to return an array of instances so capture these
+        # First we check if there is already an entry for the given name and get the values, if present
         name = "#{user}@#{host}/#{table}"
         if instance_configs.key?(name)
           instance_config = instance_configs[name]
@@ -72,45 +66,8 @@ Puppet::Type.type(:mysql_grant).provide(:mysql, parent: Puppet::Provider::Mysql)
           options.concat instance_config[:options]
         end
 
+        # Then we create the new entry for name
         sorted_privileges = stripped_privileges.uniq.sort
-        if newer_than('mysql' => '8.0.0') &&
-           [['ALTER', 'ALTER ROUTINE', 'CREATE', 'CREATE ROLE', 'CREATE ROUTINE', 'CREATE TABLESPACE', 'CREATE TEMPORARY TABLES', 'CREATE USER',
-             'CREATE VIEW', 'DELETE', 'DROP', 'DROP ROLE', 'EVENT', 'EXECUTE', 'FILE', 'INDEX', 'INSERT', 'LOCK TABLES', 'PROCESS', 'REFERENCES',
-             'RELOAD', 'REPLICATION CLIENT', 'REPLICATION SLAVE', 'SELECT', 'SHOW DATABASES', 'SHOW VIEW', 'SHUTDOWN', 'SUPER', 'TRIGGER',
-             'UPDATE'], ['ALTER', 'ALTER ROUTINE', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN',
-                         'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN', 'CLONE_ADMIN', 'CONNECTION_ADMIN', 'CREATE', 'CREATE ROLE', 'CREATE ROUTINE',
-                         'CREATE TABLESPACE', 'CREATE TEMPORARY TABLES', 'CREATE USER', 'CREATE VIEW', 'DELETE', 'DROP', 'DROP ROLE', 'ENCRYPTION_KEY_ADMIN',
-                         'EVENT', 'EXECUTE', 'FILE', 'FIREWALL_EXEMPT', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
-                         'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INDEX', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'INSERT',
-                         'LOCK TABLES', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN', 'PROCESS', 'REFERENCES', 'RELOAD', 'REPLICATION CLIENT',
-                         'REPLICATION SLAVE', 'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN',
-                         'SELECT', 'SENSITIVE_VARIABLES_OBSERVER', 'SERVICE_CONNECTION_ADMIN', 'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW DATABASES',
-                         'SHOW VIEW', 'SHOW_ROUTINE', 'SHUTDOWN', 'SUPER', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN', 'TRIGGER', 'UPDATE',
-                         'XA_RECOVER_ADMIN'], ['ALL', 'USAGE']].include?(sorted_privileges)
-
-          sorted_privileges = ['ALL']
-
-        # The following two elsif blocks of code are a workaround for issue #1474.
-        elsif sorted_privileges == ['ALL', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN', 'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN',
-                                    'CLONE_ADMIN', 'CONNECTION_ADMIN', 'ENCRYPTION_KEY_ADMIN', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
-                                    'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN',
-                                    'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN', 'SERVICE_CONNECTION_ADMIN',
-                                    'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW_ROUTINE', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN', 'XA_RECOVER_ADMIN']
-          sorted_privileges = ['ALL']
-
-        elsif sorted_privileges == ['ALL', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN', 'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN',
-                                    'CLONE_ADMIN', 'CONNECTION_ADMIN', 'ENCRYPTION_KEY_ADMIN', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
-                                    'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN',
-                                    'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN', 'SENSITIVE_VARIABLES_OBSERVER',
-                                    'SERVICE_CONNECTION_ADMIN', 'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW_ROUTINE', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN',
-                                    'XA_RECOVER_ADMIN']
-          sorted_privileges = ['ALL']
-
-        # the following elsif is there to mitigate problems with redundant ALL and USAGE, issue #1502
-        elsif sorted_privileges == ['ALL', 'USAGE']
-          sorted_privileges = ['ALL']
-        end
-
         instance_configs[name] = {
           privileges: sorted_privileges,
           table: table,
@@ -118,6 +75,54 @@ Puppet::Type.type(:mysql_grant).provide(:mysql, parent: Puppet::Provider::Mysql)
           options: options.uniq,
         }
       end
+    end
+
+    # Because of some different representation of ALL we have to go over all entries and sanitize the privileges
+    # The if block is a workaround for issue #1474 and redundant ALL and USAGE
+    representations_of_all = [
+      ['ALTER', 'ALTER ROUTINE', 'CREATE', 'CREATE ROLE', 'CREATE ROUTINE', 'CREATE TABLESPACE', 'CREATE TEMPORARY TABLES', 'CREATE USER',
+       'CREATE VIEW', 'DELETE', 'DROP', 'DROP ROLE', 'EVENT', 'EXECUTE', 'FILE', 'INDEX', 'INSERT', 'LOCK TABLES', 'PROCESS', 'REFERENCES',
+       'RELOAD', 'REPLICATION CLIENT', 'REPLICATION SLAVE', 'SELECT', 'SHOW DATABASES', 'SHOW VIEW', 'SHUTDOWN', 'SUPER', 'TRIGGER',
+       'UPDATE'],
+      ['ALL', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN', 'BACKUP_ADMIN', 'BINLOG_ADMIN',
+       'BINLOG_ENCRYPTION_ADMIN', 'CLONE_ADMIN', 'CONNECTION_ADMIN', 'ENCRYPTION_KEY_ADMIN', 'FIREWALL_EXEMPT', 'FLUSH_OPTIMIZER_COSTS',
+       'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES', 'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INNODB_REDO_LOG_ARCHIVE',
+       'INNODB_REDO_LOG_ENABLE', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN', 'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN',
+       'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN', 'SENSITIVE_VARIABLES_OBSERVER', 'SERVICE_CONNECTION_ADMIN',
+       'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW_ROUTINE', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN',
+       'XA_RECOVER_ADMIN'],
+      ['ALTER', 'ALTER ROUTINE', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN',
+       'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN', 'CLONE_ADMIN', 'CONNECTION_ADMIN', 'CREATE', 'CREATE ROLE', 'CREATE ROUTINE',
+       'CREATE TABLESPACE', 'CREATE TEMPORARY TABLES', 'CREATE USER', 'CREATE VIEW', 'DELETE', 'DROP', 'DROP ROLE', 'ENCRYPTION_KEY_ADMIN',
+       'EVENT', 'EXECUTE', 'FILE', 'FIREWALL_EXEMPT', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
+       'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INDEX', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'INSERT',
+       'LOCK TABLES', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN', 'PROCESS', 'REFERENCES', 'RELOAD', 'REPLICATION CLIENT',
+       'REPLICATION SLAVE', 'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN',
+       'SELECT', 'SENSITIVE_VARIABLES_OBSERVER', 'SERVICE_CONNECTION_ADMIN', 'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW DATABASES',
+       'SHOW VIEW', 'SHOW_ROUTINE', 'SHUTDOWN', 'SUPER', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN', 'TRIGGER', 'UPDATE',
+       'XA_RECOVER_ADMIN'],
+      ['ALL', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN', 'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN',
+       'CLONE_ADMIN', 'CONNECTION_ADMIN', 'ENCRYPTION_KEY_ADMIN', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
+       'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN',
+       'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN', 'SERVICE_CONNECTION_ADMIN',
+       'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW_ROUTINE', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN', 'XA_RECOVER_ADMIN'],
+      ['ALL', 'APPLICATION_PASSWORD_ADMIN', 'AUDIT_ABORT_EXEMPT', 'AUDIT_ADMIN', 'AUTHENTICATION_POLICY_ADMIN', 'BACKUP_ADMIN', 'BINLOG_ADMIN', 'BINLOG_ENCRYPTION_ADMIN',
+       'CLONE_ADMIN', 'CONNECTION_ADMIN', 'ENCRYPTION_KEY_ADMIN', 'FLUSH_OPTIMIZER_COSTS', 'FLUSH_STATUS', 'FLUSH_TABLES', 'FLUSH_USER_RESOURCES',
+       'GROUP_REPLICATION_ADMIN', 'GROUP_REPLICATION_STREAM', 'INNODB_REDO_LOG_ARCHIVE', 'INNODB_REDO_LOG_ENABLE', 'PASSWORDLESS_USER_ADMIN', 'PERSIST_RO_VARIABLES_ADMIN',
+       'REPLICATION_APPLIER', 'REPLICATION_SLAVE_ADMIN', 'RESOURCE_GROUP_ADMIN', 'RESOURCE_GROUP_USER', 'ROLE_ADMIN', 'SENSITIVE_VARIABLES_OBSERVER',
+       'SERVICE_CONNECTION_ADMIN', 'SESSION_VARIABLES_ADMIN', 'SET_USER_ID', 'SHOW_ROUTINE', 'SYSTEM_USER', 'SYSTEM_VARIABLES_ADMIN', 'TABLE_ENCRYPTION_ADMIN',
+       'XA_RECOVER_ADMIN'],
+      ['ALL', 'USAGE'],
+    ]
+
+    instance_configs.each do |name, config|
+      Puppet.debug("Instance privileges for #{name} before sanitizing:\n#{instance_configs[name][:privileges]}")
+      #      privileges = config[:privileges]
+      if representations_of_all.include? config[:privileges]
+        instance_configs[name][:privileges] = ['ALL']
+        Puppet.debug("privileges for #{name} had to be sanitized")
+      end
+      Puppet.debug("Instance privileges for #{name} after sanitizing:\n#{instance_configs[name][:privileges]}")
     end
     instances = []
     instance_configs.map do |name, config|
